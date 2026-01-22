@@ -18,7 +18,7 @@ st.set_page_config(page_title="교사용 대시보드", layout="wide")
 
 # [추가] 간단한 비밀번호 보호 기능
 password = st.sidebar.text_input("교사 인증 암호", type="password")
-if password != "1234":  # 원하는 비밀번호로 변경하세요
+if password != "0820":  # 원하는 비밀번호로 변경하세요
     st.warning("선생님만 접근할 수 있습니다.")
     st.stop()  # 암호가 틀리면 여기서 코드 실행 중단
 
