@@ -1,94 +1,52 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px  # 그래프 시각화를 위해 추가
+from datetime import datetime
 from supabase import create_client, Client
 
-# ---- Supabase 설정 (기존 코드와 동일) ----
+# ---- 1. Supabase 설정 (오류 수정: 세션 유지 및 예외 처리 강화) ----
 @st.cache_resource
 def get_supabase_client() -> Client:
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
-    return create_client(url, key)
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
+        return create_client(url, key)
+    except Exception as e:
+        st.error("Supabase 연결 설정(secrets)을 확인해주세요.")
+        st.stop()
 
 def fetch_all_submissions():
     supabase = get_supabase_client()
-    # 최신순으로 데이터 가져오기
+    # 생성일 기준 내림차순 정렬
     response = supabase.table("student_submissions").select("*").order("created_at", descending=True).execute()
     return response.data
 
-# ---- 메인 UI ----
-st.set_page_config(page_title="평가 관리자 대시보드", layout="wide")
+# ---- 2. UI 설정 및 데이터 로드 ----
+st.set_page_config(page_title="평가 결과 분석", layout="wide")
 
-st.title("🎓 지구과학 학습 평가 관리자")
-st.markdown("학생들의 제출 답안과 AI 피드백 결과를 모니터링합니다.")
+st.title("📊 지구과학 학습 데이터 분석 대시보드")
 
-# 데이터 불러오기
 try:
     data = fetch_all_submissions()
     if not data:
-        st.info("아직 제출된 답안이 없습니다.")
+        st.info("현재 저장된 데이터가 없습니다. 학생용 화면에서 답안을 먼저 제출해주세요.")
         st.stop()
     
     df = pd.DataFrame(data)
+
+    # ---- 3. 오류 수정 및 데이터 전처리 ----
+    # 피드백에서 'O'의 개수를 추출하여 통계 데이터 생성
+    for i in range(1, 4):
+        col_name = f'feedback_{i}'
+        # 'O:'로 시작하면 Pass(정답), 아니면 Fail(보충 필요)로 분류
+        df[f'status_{i}'] = df[col_name].apply(lambda x: '정답(O)' if str(x).startswith('O') else '보충(X)')
+
+    # ---- 4. 상단 통계 메트릭 ----
+    total_students = len(df)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("총 제출 인원", f"{total_students}명")
     
-    # ---- 대시보드 통계 ----
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("총 제출 인원", f"{len(df)}명")
-    with col2:
-        # 'O:'로 시작하는 피드백이 정답으로 간주하여 통계 (예시)
-        correct_q1 = df['feedback_1'].str.startswith("O:").sum()
-        st.metric("문항 1 정답률", f"{(correct_q1/len(df)*100):.1f}%")
-    with col3:
-        latest_submit = pd.to_datetime(df['created_at']).max().strftime('%m/%d %H:%M')
-        st.metric("최근 업데이트", latest_submit)
-
-    st.divider()
-
-    # ---- 학생별 상세 조회 ----
-    st.subheader("📋 학생별 제출 답안 상세 내역")
-    
-    # 검색 및 필터링
-    search_id = st.text_input("학번으로 검색", placeholder="검색할 학번을 입력하세요.")
-    if search_id:
-        display_df = df[df['student_id'].astype(str).str.contains(search_id)]
-    else:
-        display_df = df
-
-    # 데이터 테이블 표시
-    for index, row in display_df.iterrows():
-        with st.expander(f"📌 학번: {row['student_id']} | 제출시간: {row['created_at'][:16]}"):
-            c1, c2 = st.columns([1, 1])
-            
-            with c1:
-                st.markdown("**[학생 답안]**")
-                st.info(f"**Q1:** {row['answer_1']}")
-                st.info(f"**Q2:** {row['answer_2']}")
-                st.info(f"**Q3:** {row['answer_3']}")
-            
-            with c2:
-                st.markdown("**[AI 피드백]**")
-                def show_feedback(fb):
-                    if fb.startswith("O:"): st.success(fb)
-                    else: st.warning(fb)
-                
-                show_feedback(row['feedback_1'])
-                show_feedback(row['feedback_2'])
-                show_feedback(row['feedback_3'])
-                
-            if st.button(f"{row['student_id']} 데이터 삭제", key=f"del_{index}"):
-                # 삭제 기능 (필요시 활성화)
-                # supabase.table("student_submissions").delete().eq("id", row['id']).execute()
-                st.error("삭제 권한이 없습니다. (DB 직접 제어 필요)")
-
-    # ---- 데이터 다운로드 ----
-    st.divider()
-    csv = display_df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button(
-        label="📥 전체 결과 Excel(CSV) 다운로드",
-        data=csv,
-        file_name=f"earth_science_results_{datetime.now().strftime('%Y%m%d')}.csv",
-        mime='text/csv',
-    )
-
-except Exception as e:
-    st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
+    # 각 문항별 정답률 계산
+    q1_pass = (df['status_1'] == '정답(O)').sum()
+    q2_pass = (df['status_2'] == '정답(O)').sum()
+    q3_pass = (df['status_3'] == '
